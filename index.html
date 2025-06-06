@@ -74,13 +74,20 @@
 <script type="module">
   // Firebase 11.6.1 SDKs
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-  import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, inMemoryPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-  import { getFirestore, collection, doc, addDoc, getDocs, onSnapshot, updateDoc, deleteDoc, writeBatch, query, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+  import { getFirestore, collection, doc, addDoc, getDocs, onSnapshot, updateDoc, deleteDoc, writeBatch, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
   // --- Configuration ---
-  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-packing-app';
-  const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "YOUR_API_KEY", authDomain: "YOUR_AUTH_DOMAIN", projectId: "YOUR_PROJECT_ID" };
-  const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+  // Firebase-konfiguration från miljövariabler
+  const firebaseConfig = {
+    apiKey: process.env.VITE_FIREBASE_API_KEY,
+    authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.VITE_FIREBASE_APP_ID,
+    measurementId: process.env.VITE_FIREBASE_MEASUREMENT_ID
+  };
 
   // --- Initial Data ---
   const initialData = {
@@ -150,12 +157,10 @@
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
-    // setLogLevel('debug');
-
-    itemsCollection = collection(db, `artifacts/${appId}/public/data/packing_items`);
+    itemsCollection = collection(db, 'packing_items');
   } catch (error) {
     console.error("Firebase initialization failed:", error);
-    loadingIndicator.innerHTML = '<p class="text-red-500">Kunde inte ansluta till databasen. Kontrollera konfigurationen.</p>';
+    loadingIndicator.innerHTML = '<p class="text-red-500">Kunde inte ansluta till databasen. Kontrollera att du har klistrat in en giltig firebaseConfig.</p>';
   }
 
   // --- Authentication ---
@@ -173,15 +178,10 @@
 
   async function signIn() {
     try {
-      await setPersistence(auth, inMemoryPersistence);
-      if (initialAuthToken) {
-        await signInWithCustomToken(auth, initialAuthToken);
-      } else {
-        await signInAnonymously(auth);
-      }
+      await signInAnonymously(auth);
     } catch (error) {
       console.error("Anonymous sign-in failed:", error);
-      loadingText.innerHTML = '<p class="text-red-500 font-semibold">Autentisering misslyckades. Appen kan inte synkroniseras.</p>';
+      loadingText.parentElement.innerHTML = '<p class="text-red-500 font-semibold text-center">Autentisering misslyckades. Appen kan inte synkroniseras.<br><br>Kontrollera att: <br>1. Din `firebaseConfig` är korrekt. <br>2. "Anonymous" sign-in är aktiverat i Firebase Authentication. <br>3. Du har skapat en Firestore-databas i "test mode".</p>';
     }
   }
 
@@ -190,19 +190,13 @@
 
   function setupRealtimeListener() {
     onSnapshot(query(itemsCollection), async (snapshot) => {
-      // This logic runs every time data changes in the database.
-
-      // If this is the first load and the list is empty, populate it with the default items.
       if (!hasCheckedForPopulation && snapshot.empty) {
-        hasCheckedForPopulation = true; // Set flag immediately to prevent running this again.
+        hasCheckedForPopulation = true;
         console.log("Snapshot is empty on first load. Populating initial data...");
         await populateInitialData();
-        // We exit here. The listener will be automatically triggered again by populateInitialData,
-        // and that *next* run will render the list.
         return;
       }
 
-      // This part runs if data already existed, or on subsequent updates.
       hasCheckedForPopulation = true;
 
       const allItems = [];
@@ -213,16 +207,14 @@
       allItems.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
       renderList(allItems);
 
-      // Finally, hide the loader and show the app content.
       loadingIndicator.classList.add('hidden');
       appContent.classList.remove('hidden');
 
     }, (error) => {
-      // This part runs if there's an error connecting to Firestore.
       console.error("Error with real-time listener:", error);
       loadingIndicator.classList.remove('hidden');
       appContent.classList.add('hidden');
-      loadingText.innerHTML = `<p class="text-red-500 font-semibold text-center">Ett fel uppstod vid hämtning av listan.</p><p class="text-red-400 text-sm mt-1 text-center">Felkod: ${error.code}</p>`;
+      loadingText.innerHTML = `<p class="text-red-500 font-semibold text-center">Ett fel uppstod vid hämtning av listan.</p><p class="text-red-400 text-sm mt-1 text-center">Felkod: ${error.code}. Se till att din databas är skapad i "test mode".</p>`;
     });
   }
 
@@ -307,7 +299,6 @@
     label.textContent = item.text;
     label.className = `ml-3 text-base item-text ${item.packed ? 'packed' : ''} break-words`;
 
-    // Allow clicking the label to toggle the checkbox
     label.addEventListener('click', () => {
       checkbox.checked = !checkbox.checked;
       togglePackedStatus(item.id, checkbox.checked);
@@ -352,7 +343,7 @@
   });
 
   async function togglePackedStatus(id, newStatus) {
-    const itemRef = doc(db, `artifacts/${appId}/public/data/packing_items/${id}`);
+    const itemRef = doc(db, 'packing_items', id);
     try {
       await updateDoc(itemRef, { packed: newStatus });
     } catch (error) {
@@ -361,7 +352,7 @@
   }
 
   async function deleteItem(id) {
-    const itemRef = doc(db, `artifacts/${appId}/public/data/packing_items/${id}`);
+    const itemRef = doc(db, 'packing_items', id);
     try {
       await deleteDoc(itemRef);
     } catch (error) {
