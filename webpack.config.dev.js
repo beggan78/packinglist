@@ -3,11 +3,15 @@ const common = require('./webpack.common.js');
 
 module.exports = merge(common, {
   mode: 'development',
-  devtool: 'inline-source-map',
+  devtool: false,
   devServer: {
-    liveReload: true,
-    hot: true,
+    static: {
+      directory: __dirname,
+    },
+    compress: true,
+    port: 8080,
     open: true,
-    static: ['./'],
+    hot: false,
+    liveReload: false,
   },
 });
