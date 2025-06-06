@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Packlista för Kreta</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    .item-text.packed {
+      text-decoration: line-through;
+      color: #9ca3af; /* gray-400 */
+    }
+    /* Simple spinner for loading state */
+    .loader {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #3498db;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+<div id="app-container" class="max-w-2xl mx-auto p-4 sm:p-6 lg:p-8">
+
+  <header class="text-center mb-6">
+    <h1 class="text-4xl font-bold text-blue-600">Packlista Kreta 🏝️</h1>
+    <p class="text-gray-600 mt-2">En delad packlista för hela familjen. Ändringar syns direkt för alla!</p>
+  </header>
+
+  <div id="auth-info" class="text-center mb-4 p-3 bg-blue-100 border-l-4 border-blue-500 text-blue-700 rounded-md hidden">
+    <p class="font-semibold">Ansluten!</p>
+    <p class="text-xs break-all">Ditt anonyma användar-ID: <span id="user-id"></span></p>
+    <p class="text-xs mt-1">Dela webblänken till denna sida med familjen för att packa tillsammans.</p>
+  </div>
+
+  <div id="loading-indicator" class="flex flex-col justify-center items-center my-10">
+    <div class="loader"></div>
+    <p id="loading-text" class="ml-4 text-gray-500 mt-4">Laddar er packlista...</p>
+  </div>
+
+  <main id="app-content" class="hidden">
+    <!-- Add new item form -->
+    <div class="bg-white p-4 rounded-lg shadow-md mb-6">
+      <h2 class="text-xl font-semibold mb-3">Lägg till något på listan</h2>
+      <form id="add-item-form" class="flex flex-col sm:flex-row gap-3">
+        <input type="text" id="new-item-input" placeholder="T.ex. Padelracket" class="flex-grow p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+        <button type="submit" class="bg-blue-600 text-white font-semibold py-3 px-6 rounded-md hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+          Lägg till
+        </button>
+      </form>
+    </div>
+
+    <!-- Packing list -->
+    <div id="packing-list-container" class="bg-white p-4 rounded-lg shadow-md">
+      <!-- Categories will be dynamically inserted here -->
+    </div>
+  </main>
+
+</div>
+
+<script type="module">
+  // Firebase 11.6.1 SDKs
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+  import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, inMemoryPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+  import { getFirestore, collection, doc, addDoc, getDocs, onSnapshot, updateDoc, deleteDoc, writeBatch, query, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+  // --- Configuration ---
+  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-packing-app';
+  const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "YOUR_API_KEY", authDomain: "YOUR_AUTH_DOMAIN", projectId: "YOUR_PROJECT_ID" };
+  const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+  // --- Initial Data ---
+  const initialData = {
+    "Viktigt (Handbagage)": [
+      { text: "Pass (alla fyra)", packed: false },
+      { text: "Biljetter & bokningsbekräftelser", packed: false },
+      { text: "Europeiska sjukförsäkringskort (EHIC)", packed: false },
+      { text: "Plånbok, körkort, kreditkort, Euro", packed: false },
+      { text: "Mobiltelefoner och powerbank", packed: false },
+      { text: "Laddare till elektronik", packed: false },
+    ],
+    "Kläder": [
+      { text: "T-shirts/linnen", packed: false },
+      { text: "Shorts/kjolar", packed: false },
+      { text: "Långbyxor för kvällen", packed: false },
+      { text: "Finare outfit för middag", packed: false },
+      { text: "Kofta/tunnare jacka", packed: false },
+      { text: "Underkläder och strumpor", packed: false },
+      { text: "Pyjamas", packed: false },
+    ],
+    "Bad & Strand": [
+      { text: "Badkläder (minst 2 per person)", packed: false },
+      { text: "Solskyddsfaktor (hög SPF)", packed: false },
+      { text: "After sun", packed: false },
+      { text: "Solglasögon", packed: false },
+      { text: "Keps/Solhatt", packed: false },
+      { text: "Simglasögon (Julie & Nicole)", packed: false },
+      { text: "Strandväska", packed: false },
+    ],
+    "Träning": [
+      { text: "Träningskläder (shorts, toppar)", packed: false },
+      { text: "Träningsskor", packed: false },
+      { text: "Padelracketar", packed: false },
+      { text: "Padelbollar", packed: false },
+      { text: "Vattenflaskor", packed: false },
+    ],
+    "Hygien & Apotek": [
+      { text: "Tandborstar & tandkräm", packed: false },
+      { text: "Schampo, balsam, duschtvål", packed: false },
+      { text: "Deodorant", packed: false },
+      { text: "Reseapotek (plåster, värktabletter)", packed: false },
+      { text: "Myggmedel", packed: false },
+    ],
+    "För Barnen": [
+      { text: "Böcker/tidningar", packed: false },
+      { text: "Ritblock och pennor", packed: false },
+      { text: "Surfplatta + hörlurar", packed: false },
+      { text: "Kortlek/resespel", packed: false },
+    ]
+  };
+
+
+  // --- UI Elements ---
+  const loadingIndicator = document.getElementById('loading-indicator');
+  const loadingText = document.getElementById('loading-text');
+  const appContent = document.getElementById('app-content');
+  const listContainer = document.getElementById('packing-list-container');
+  const addItemForm = document.getElementById('add-item-form');
+  const newItemInput = document.getElementById('new-item-input');
+  const authInfoDiv = document.getElementById('auth-info');
+  const userIdSpan = document.getElementById('user-id');
+
+  // --- Firebase Initialization ---
+  let app, auth, db, itemsCollection;
+
+  try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    // setLogLevel('debug');
+
+    itemsCollection = collection(db, `artifacts/${appId}/public/data/packing_items`);
+  } catch (error) {
+    console.error("Firebase initialization failed:", error);
+    loadingIndicator.innerHTML = '<p class="text-red-500">Kunde inte ansluta till databasen. Kontrollera konfigurationen.</p>';
+  }
+
+  // --- Authentication ---
+  onAuthStateChanged(auth, user => {
+    if (user) {
+      console.log("User is authenticated with UID:", user.uid);
+      userIdSpan.textContent = user.uid;
+      authInfoDiv.classList.remove('hidden');
+      setupRealtimeListener();
+    } else {
+      console.log("User is not authenticated. Attempting to sign in...");
+      signIn();
+    }
+  });
+
+  async function signIn() {
+    try {
+      await setPersistence(auth, inMemoryPersistence);
+      if (initialAuthToken) {
+        await signInWithCustomToken(auth, initialAuthToken);
+      } else {
+        await signInAnonymously(auth);
+      }
+    } catch (error) {
+      console.error("Anonymous sign-in failed:", error);
+      loadingText.innerHTML = '<p class="text-red-500 font-semibold">Autentisering misslyckades. Appen kan inte synkroniseras.</p>';
+    }
+  }
+
+  // --- Real-time Data Handling ---
+  let hasCheckedForPopulation = false;
+
+  function setupRealtimeListener() {
+    onSnapshot(query(itemsCollection), async (snapshot) => {
+      // This logic runs every time data changes in the database.
+
+      // If this is the first load and the list is empty, populate it with the default items.
+      if (!hasCheckedForPopulation && snapshot.empty) {
+        hasCheckedForPopulation = true; // Set flag immediately to prevent running this again.
+        console.log("Snapshot is empty on first load. Populating initial data...");
+        await populateInitialData();
+        // We exit here. The listener will be automatically triggered again by populateInitialData,
+        // and that *next* run will render the list.
+        return;
+      }
+
+      // This part runs if data already existed, or on subsequent updates.
+      hasCheckedForPopulation = true;
+
+      const allItems = [];
+      snapshot.forEach(doc => {
+        allItems.push({ id: doc.id, ...doc.data() });
+      });
+
+      allItems.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      renderList(allItems);
+
+      // Finally, hide the loader and show the app content.
+      loadingIndicator.classList.add('hidden');
+      appContent.classList.remove('hidden');
+
+    }, (error) => {
+      // This part runs if there's an error connecting to Firestore.
+      console.error("Error with real-time listener:", error);
+      loadingIndicator.classList.remove('hidden');
+      appContent.classList.add('hidden');
+      loadingText.innerHTML = `<p class="text-red-500 font-semibold text-center">Ett fel uppstod vid hämtning av listan.</p><p class="text-red-400 text-sm mt-1 text-center">Felkod: ${error.code}</p>`;
+    });
+  }
+
+  async function populateInitialData() {
+    const batch = writeBatch(db);
+    let timestamp = Date.now();
+    Object.entries(initialData).forEach(([category, items]) => {
+      items.forEach(item => {
+        const docRef = doc(itemsCollection);
+        batch.set(docRef, {
+          ...item,
+          category: category,
+          createdAt: timestamp++
+        });
+      });
+    });
+    try {
+      await batch.commit();
+      console.log("Initial data populated successfully.");
+    } catch(error) {
+      console.error("Failed to populate initial data:", error);
+    }
+  }
+
+  // --- UI Rendering ---
+  function renderList(items) {
+    listContainer.innerHTML = '';
+
+    const itemsByCategory = items.reduce((acc, item) => {
+      const category = item.category || 'Övrigt';
+      if (!acc[category]) {
+        acc[category] = [];
+      }
+      acc[category].push(item);
+      return acc;
+    }, {});
+
+    const categoryOrder = Object.keys(initialData);
+    if (itemsByCategory['Övrigt']) {
+      categoryOrder.push('Övrigt');
+    }
+
+    for(const category of categoryOrder){
+      if(itemsByCategory[category]){
+        const categoryDiv = document.createElement('div');
+        categoryDiv.className = 'mb-6';
+
+        const categoryTitle = document.createElement('h3');
+        categoryTitle.className = 'text-lg font-semibold text-gray-700 border-b pb-2 mb-3';
+        categoryTitle.textContent = category;
+        categoryDiv.appendChild(categoryTitle);
+
+        const itemList = document.createElement('ul');
+        itemList.className = 'space-y-2';
+
+        itemsByCategory[category].forEach(item => {
+          const li = createListItem(item);
+          itemList.appendChild(li);
+        });
+
+        categoryDiv.appendChild(itemList);
+        listContainer.appendChild(categoryDiv);
+      }
+    }
+  }
+
+  function createListItem(item) {
+    const li = document.createElement('li');
+    li.className = 'flex items-center justify-between p-3 bg-gray-50 rounded-md transition hover:bg-gray-100';
+    li.dataset.id = item.id;
+
+    const itemContent = document.createElement('div');
+    itemContent.className = 'flex items-center flex-grow';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = item.packed;
+    checkbox.className = 'h-6 w-6 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer flex-shrink-0';
+    checkbox.addEventListener('change', () => togglePackedStatus(item.id, checkbox.checked));
+
+    const label = document.createElement('label');
+    label.textContent = item.text;
+    label.className = `ml-3 text-base item-text ${item.packed ? 'packed' : ''} break-words`;
+
+    // Allow clicking the label to toggle the checkbox
+    label.addEventListener('click', () => {
+      checkbox.checked = !checkbox.checked;
+      togglePackedStatus(item.id, checkbox.checked);
+    });
+
+    itemContent.appendChild(checkbox);
+    itemContent.appendChild(label);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.innerHTML = '&times;';
+    deleteButton.className = 'text-red-500 font-bold text-2xl leading-none px-2 rounded hover:bg-red-100 ml-2 flex-shrink-0';
+    deleteButton.title = 'Ta bort från listan';
+    deleteButton.addEventListener('click', () => deleteItem(item.id));
+
+    li.appendChild(itemContent);
+    li.appendChild(deleteButton);
+
+    return li;
+  }
+
+  // --- Event Handlers & Firestore Actions ---
+  addItemForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = newItemInput.value.trim();
+    if (text === '') return;
+
+    newItemInput.disabled = true;
+    try {
+      await addDoc(itemsCollection, {
+        text: text,
+        packed: false,
+        category: 'Övrigt',
+        createdAt: Date.now()
+      });
+      newItemInput.value = '';
+    } catch (error) {
+      console.error("Error adding document: ", error);
+    } finally {
+      newItemInput.disabled = false;
+      newItemInput.focus();
+    }
+  });
+
+  async function togglePackedStatus(id, newStatus) {
+    const itemRef = doc(db, `artifacts/${appId}/public/data/packing_items/${id}`);
+    try {
+      await updateDoc(itemRef, { packed: newStatus });
+    } catch (error) {
+      console.error("Error updating document:", error);
+    }
+  }
+
+  async function deleteItem(id) {
+    const itemRef = doc(db, `artifacts/${appId}/public/data/packing_items/${id}`);
+    try {
+      await deleteDoc(itemRef);
+    } catch (error) {
+      console.error("Error deleting document:", error);
+    }
+  }
+</script>
+
+</body>
+</html>
